@@ -1,0 +1,181 @@
+import pandas as pd
+import smtplib
+import os
+import time
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import logging
+from typing import List, Tuple
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('email_campaign.log'),
+        logging.StreamHandler()
+    ]
+)
+
+# Configuration
+class Config:
+    EXCEL_FILE = os.getenv('EXCEL_FILE_PATH')
+    SHEET_NAME = os.getenv('SHEET_NAME', 'Sheet1')
+    SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+    SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
+    SENDER_EMAIL = os.getenv('SENDER_EMAIL')
+    SENDER_PASSWORD = os.getenv('SENDER_PASSWORD')
+    DELAY_BETWEEN_EMAILS = int(os.getenv('DELAY_BETWEEN_EMAILS', '2'))
+
+def validate_config() -> bool:
+    """Validate essential configuration settings."""
+    required_vars = ['EXCEL_FILE_PATH', 'SENDER_EMAIL', 'SENDER_PASSWORD']
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        logging.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+        return False
+        
+    if not os.path.exists(Config.EXCEL_FILE):
+        logging.error(f"Excel file not found: {Config.EXCEL_FILE}")
+        return False
+    return True
+
+def get_professors_and_emails() -> List[Tuple[str, str, str, str, str, str]]:
+    """
+    Extract Professor names, university, emails, research area, research paper status, and paper name.
+    Skips professors if column G has "Yes".
+    Returns a list of tuples containing (professor_name, university, email, research_area, has_paper, paper_name).
+    """
+    try:
+        df = pd.read_excel(Config.EXCEL_FILE, sheet_name=Config.SHEET_NAME)
+        logging.info(f"Successfully loaded Excel file with columns: {df.columns.tolist()}")
+
+        valid_contacts = df[
+            (df.iloc[:, 2].astype(str).str.contains("@")) &  # Ensure valid email
+            df.iloc[:, 0].notna() &  # Ensure professor name exists
+            df.iloc[:, 1].notna() &  # Ensure university exists
+            (~df.iloc[:, 6].astype(str).str.strip().str.lower().eq("yes"))  # Skip if column G is "Yes"
+        ]
+
+        contacts = valid_contacts.iloc[:, [0, 1, 2, 3, 4, 5]].values.tolist()
+        logging.info(f"Found {len(contacts)} valid contacts after filtering")
+        return contacts
+
+    except Exception as e:
+        logging.error(f"Error reading Excel file: {str(e)}")
+        return []
+
+def create_email_content(professor_name: str, university: str, research_area: str, has_paper: str, paper_name: str) -> tuple:
+    """Generate email subject and body based on research paper availability."""
+    subject = "Interested in Research"
+
+    if has_paper.strip().upper() == "Y" and paper_name and paper_name.strip().lower() != "nan":
+        # Email when research paper exists
+        body = (
+            f"Hello Professor {professor_name},\n\n"
+            f"I hope you're having a great day.\n\n"
+            f"I recently came across your research in {research_area} at {university}, and I found your work titled '{paper_name}' particularly interesting.\n\n"
+            "I'm YOURNAME, a GRADEX student at YOURSCHOOL, and I’m deeply interested in research related to "
+            f"{research_area} as well as YOURINTEREST.\n\n"
+            f"I would love to learn more about your current projects and any opportunities to contribute at {university}. "
+            "Since I live in XXX, I am available for hybrid or remote opportunities.\n\n"
+            "Looking forward to your thoughts.\n\n"
+            "Best regards,\n"
+            f"{os.getenv('SENDER_NAME')}"
+        )
+    else:
+        # Email when no research paper is available
+        body = (
+            f"Hello Professor {professor_name},\n\n"
+            f"I hope you're having a great day.\n\n"
+            f"I recently came across your research in {research_area} at {university}, and I really admire your contributions in this field.\n\n"
+            "I'm YOURNAME, a GRADEX student at YOURSCHOOL, and I’m deeply interested in research related to "
+            f"{research_area} as well as YOURINTEREST.\n\n"
+            f"I would love to learn more about your current projects and any opportunities to contribute at {university}. "
+            "Since I live in XXX, I am available for hybrid or remote opportunities.\n\n"
+            "I'd love to discuss this further."
+            "Looking forward to your thoughts.\n\n"
+            "Best regards,\n"
+            f"{os.getenv('SENDER_NAME')}"
+        )
+
+    return subject, body
+
+
+def send_email(professor_name: str, university: str, research_area: str, has_paper: str, paper_name: str, recipient_email: str) -> bool:
+    """
+    Send email to a single recipient.
+    Adjusts email content based on whether the professor has a research paper.
+    """
+    subject, body = create_email_content(professor_name, university, research_area, has_paper, paper_name)
+
+    msg = MIMEMultipart()
+    msg['From'] = Config.SENDER_EMAIL
+    msg['To'] = recipient_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        with smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT) as server:
+            server.starttls()
+            server.login(Config.SENDER_EMAIL, Config.SENDER_PASSWORD)
+            server.send_message(msg)
+            logging.info(f"Successfully sent email to {professor_name} ({recipient_email})")
+            return True
+
+    except Exception as e:
+        logging.error(f"Failed to send email to {professor_name} ({recipient_email}): {str(e)}")
+        return False
+    
+    try:
+        with smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT) as server:
+            server.starttls()
+            server.login(Config.SENDER_EMAIL, Config.SENDER_PASSWORD)
+            server.send_message(msg)
+            logging.info(f"Successfully sent email to {professor_name} ({recipient_email})")
+            return True
+            
+    except Exception as e:
+        logging.error(f"Failed to send email to {professor_name} ({recipient_email}): {str(e)}")
+        return False
+
+def main():
+    """Main execution function."""
+    if not validate_config():
+        return
+    
+    # Load the Excel file and filter data
+    df = pd.read_excel(Config.EXCEL_FILE, sheet_name=Config.SHEET_NAME)
+    logging.info(f"Successfully loaded Excel file with columns: {df.columns.tolist()}")
+    
+    # Filter valid contacts
+    contacts = df[(df.iloc[:, 2].astype(str).str.contains('@')) &  # Ensure valid email
+                  df.iloc[:, 0].notna() &  # Ensure professor's name exists
+                  df.iloc[:, 1].notna() &  # Ensure university exists
+                  df.iloc[:, 6].str.strip().str.lower() != 'yes']  # Skip if column G says 'Yes'
+    
+    logging.info(f"Found {len(contacts)} valid contacts after filtering")
+    
+    successful_sends = 0
+    failed_sends = 0
+    
+    for professor_name, university, email, research_area, has_paper, paper_name, reached_out in contacts.itertuples(index=False):
+        if reached_out.lower() == "yes":
+            logging.info(f"Skipping {professor_name} as they have already been contacted.")
+            continue
+        
+        if send_email(professor_name, university, research_area, has_paper, paper_name, email):
+            successful_sends += 1
+        else:
+            failed_sends += 1
+        
+        time.sleep(Config.DELAY_BETWEEN_EMAILS)  # Avoid triggering spam filters
+    
+    logging.info(f"Campaign completed. Successful: {successful_sends}, Failed: {failed_sends}")
+if __name__ == "__main__":
+    main()
