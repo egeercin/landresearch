@@ -1,0 +1,8 @@
+EXCEL_FILE_PATH=/Users/NAME/Desktop/pythonprojects/test/test.xlsx
+SHEET_NAME=Sheet1
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+SENDER_EMAIL=namesurname@gmail.com
+SENDER_PASSWORD=abcdabcdabcdabcd
+DELAY_BETWEEN_EMAILS=2
+SENDER_NAME=NAME SURNAME
